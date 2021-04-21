@@ -97,7 +97,7 @@ func (c *Client) Upload(ctx context.Context, inputC <-chan *UploadInput) (stats 
 
 // uploader implements a concurrent multi-stage pipeline to read blobs from the
 // file system, check their presence on the server and then upload if necessary.
-// Common blobs is deduplicated.
+// Common blobs are deduplicated.
 //
 // uploader.eg is used to schedule work, while concurrency of individual
 // expensive operations is controlled via separate semaphores.
@@ -124,8 +124,7 @@ type uploader struct {
 func (u *uploader) startProcessing(ctx context.Context, in *UploadInput) error {
 	if in.Path == "" {
 		// Simple case: the blob is in memory.
-		err := u.scheduleCheck(ctx, uploadItemFromBlob("", in.Content))
-		return err
+		return u.scheduleCheck(ctx, uploadItemFromBlob("", in.Content))
 	}
 
 	// Compute the absolute path only once per directory tree.
@@ -183,13 +182,13 @@ func (u *uploader) visitFile(ctx context.Context, absName string, info os.FileIn
 	return e.dirEntry, e.err
 }
 
-// visitRegularFile computes the hash of the file and schedules a presence
+// visitRegularFile computes the hash of a regular file and schedules a presence
 // check.
 //
 // It distinguishes three categories of file sizes:
 //  - small: small files are buffered in memory entirely, thus read only once.
 //    They are treated same as UploadInput with Contents and without Path.
-//    See ClientConfig.BufferFileThreshold.
+//    See also ClientConfig.SmallFileThreshold.
 //  - medium: the hash is computed, the file is closed and a presence check is
 //    scheduled.
 //  - large: the hash is computed, the file is rewinded without closing and
@@ -201,11 +200,13 @@ func (u *uploader) visitFile(ctx context.Context, absName string, info os.FileIn
 //    Only one large file is processed at a time because most GCE disks are
 //    network disks. Reading many large files concurrently appears to saturate
 //    the network and slows down the progress.
+//    See also ClientConfig.LargeFileThreshold.
 func (u *uploader) visitRegularFile(ctx context.Context, absName string, info os.FileInfo) (*repb.FileNode, error) {
 	isLarge := info.Size() >= u.LargeFileThreshold
-	// Read only one large file at a time.
+
+	// Lock the mutex before acquiring a semaphore to avoid hogging the latter.
 	if isLarge {
-		// Lock the mutex before acquiring a semaphore to avoid hogging the latter.
+		// Read only one large file at a time.
 		u.muLargeFile.Lock()
 		defer u.muLargeFile.Unlock()
 	}
@@ -277,7 +278,7 @@ func (u *uploader) visitRegularFile(ctx context.Context, absName string, info os
 	return ret, u.scheduleCheck(ctx, item)
 }
 
-// visitDir reads a directory and visits its descendants, subject to the
+// visitDir reads a directory and its descendants, subject to the
 // predicate. The function blocks until each descendant is visited, but the
 // visitation happens concurrently, using u.eg.
 func (u *uploader) visitDir(ctx context.Context, absName string, predicate FilePredicate) (*repb.DirectoryNode, error) {
@@ -312,22 +313,18 @@ func (u *uploader) visitDir(ctx context.Context, absName string, predicate FileP
 
 			for _, info := range infos {
 				info := info
-				eAbsName := filepath.Join(absName, info.Name())
-				if predicate != nil && !predicate(eAbsName, info.Mode()) {
+				absChild := filepath.Join(absName, info.Name())
+				if predicate != nil && !predicate(absChild, info.Mode()) {
 					continue
 				}
 				wg.Add(1)
 				u.eg.Go(func() error {
 					defer wg.Done()
-					node, err := u.visitFile(ctx, eAbsName, info, predicate)
-
+					node, err := u.visitFile(ctx, absChild, info, predicate)
 					mu.Lock()
 					defer mu.Unlock()
-
 					if err != nil {
-						if subErr == nil {
-							subErr = err
-						}
+						subErr = err
 						return err
 					}
 

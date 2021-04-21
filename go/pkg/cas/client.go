@@ -38,11 +38,11 @@ type Client struct {
 // See DefaultClientConfig() for the default values.
 type ClientConfig struct {
 	// Maximum number of concurrent file system operations.
-	// TODO(nodir): ensure this does not hurt streamers.
+	// TODO(nodir): ensure this does not hurt streaming performance
 	FSConcurrency int
 
 	// If a file is smaller than or equal to this threshold, then it is buffered
-	// it entirely.
+	// entirely (read only once).
 	SmallFileThreshold int64
 
 	// If a file is larger than or equal to this threshold, then it is considered
@@ -85,10 +85,10 @@ func (c *ClientConfig) Validate() error {
 	case c.FSConcurrency <= 0:
 		return fmt.Errorf("FSConcurrency must be positive")
 
-	case c.SmallFileThreshold < 0:
+	case c.SmallFileThreshold <= 0:
 		return fmt.Errorf("SmallFileThreshold must not be negative")
 	case c.LargeFileThreshold < 0:
-		return fmt.Errorf("LargeFileThreshold must not be negative")
+		return fmt.Errorf("LargeFileThreshold must be positive")
 	case c.SmallFileThreshold >= c.LargeFileThreshold:
 		return fmt.Errorf("SmallFileThreshold must be smaller than LargeFileThreshold")
 

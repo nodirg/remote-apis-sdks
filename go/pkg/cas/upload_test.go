@@ -14,21 +14,6 @@ import (
 	"github.com/google/go-cmp/cmp"
 )
 
-func mustUpload(t *testing.T, c *Client, inputs ...*UploadInput) *TransferStats {
-	inputC := make(chan *UploadInput, len(inputs))
-	for _, in := range inputs {
-		inputC <- in
-	}
-	close(inputC)
-
-	ctx := context.Background()
-	stats, err := c.Upload(ctx, inputC)
-	if err != nil {
-		t.Fatalf("failed to upload: %s", err)
-	}
-	return stats
-}
-
 func TestFS(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -154,6 +139,12 @@ func TestFS(t *testing.T) {
 	}
 }
 
+func compareUploadItems(x, y *uploadItem) bool {
+	return x.Title == y.Title &&
+		proto.Equal(x.Digest, y.Digest) &&
+		((x.Open == nil && y.Open == nil) || cmp.Equal(mustReadAll(x), mustReadAll(y)))
+}
+
 func mustReadAll(item *uploadItem) []byte {
 	r, err := item.Open()
 	if err != nil {
@@ -164,10 +155,4 @@ func mustReadAll(item *uploadItem) []byte {
 		panic(err)
 	}
 	return data
-}
-
-func compareUploadItems(x, y *uploadItem) bool {
-	return x.Title == y.Title &&
-		proto.Equal(x.Digest, y.Digest) &&
-		((x.Open == nil && y.Open == nil) || cmp.Equal(mustReadAll(x), mustReadAll(y)))
 }
